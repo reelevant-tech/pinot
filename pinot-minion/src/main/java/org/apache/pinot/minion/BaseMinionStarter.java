@@ -22,6 +22,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -49,6 +50,7 @@ import org.apache.pinot.common.utils.TlsUtils;
 import org.apache.pinot.common.utils.fetcher.SegmentFetcherFactory;
 import org.apache.pinot.common.utils.helix.HelixHelper;
 import org.apache.pinot.common.version.PinotVersion;
+import org.apache.pinot.core.common.MinionConstants;
 import org.apache.pinot.core.transport.ListenerConfig;
 import org.apache.pinot.core.util.ListenerConfigUtil;
 import org.apache.pinot.minion.event.EventObserverFactoryRegistry;
@@ -171,6 +173,14 @@ public abstract class BaseMinionStarter implements ServiceStartable {
     LOGGER.info("Minion configs: {}", new PinotAppConfigs(getConfig()).toJSONString());
     Utils.logVersions();
     MinionContext minionContext = MinionContext.getInstance();
+
+    minionContext.setRecordPurgerFactory((tableName, configs) -> {
+      return row -> {
+        String columnName = configs.getConfigs().get(MinionConstants.PurgeTask.MATCHING_COLUMN_NAME);
+        List<String> columnValues = Arrays.asList(configs.getConfigs().get(MinionConstants.PurgeTask.MATCHING_COLUMN_VALUES).split(","));
+        return columnValues.contains(row.getValue(columnName));
+      };
+    });
 
     // Initialize data directory
     LOGGER.info("Initializing data directory");

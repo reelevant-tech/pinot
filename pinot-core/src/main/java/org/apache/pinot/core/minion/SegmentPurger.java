@@ -21,6 +21,7 @@ package org.apache.pinot.core.minion;
 import com.google.common.base.Preconditions;
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.segment.creator.impl.SegmentIndexCreationDriverImpl;
@@ -226,7 +227,7 @@ public class SegmentPurger {
     /**
      * Get the {@link RecordPurger} for the given table.
      */
-    RecordPurger getRecordPurger(String rawTableName);
+    RecordPurger getRecordPurger(String rawTableName, PinotTaskConfig configs);
   }
 
   /**

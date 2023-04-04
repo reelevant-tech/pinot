@@ -64,6 +64,8 @@ public class MinionConstants {
     public static final String TASK_TYPE = "PurgeTask";
     public static final String LAST_PURGE_TIME_THREESOLD_PERIOD = "lastPurgeTimeThresholdPeriod";
     public static final String DEFAULT_LAST_PURGE_TIME_THRESHOLD_PERIOD = "14d";
+    public static final String MATCHING_COLUMN_NAME = "matchingColumnName";
+    public static final String MATCHING_COLUMN_VALUES = "matchingColumnValues";
   }
 
   // Common config keys for segment merge tasks.

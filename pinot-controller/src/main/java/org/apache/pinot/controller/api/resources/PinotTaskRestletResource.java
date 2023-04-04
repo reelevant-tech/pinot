@@ -666,12 +666,12 @@ public class PinotTaskRestletResource {
       throw new ControllerApplicationException(LOGGER, "Task already exists: " + adhocTaskConfig.getTaskName(),
           Response.Status.CONFLICT, e);
     } catch (UnknownTaskTypeException e) {
-      throw new ControllerApplicationException(LOGGER, "Unknown task type: " + adhocTaskConfig.getTaskType(),
+      throw new ControllerApplicationException(LOGGER, "Unknown task type: " + adhocTaskConfig.getTaskType() + "(" + e.getMessage() + ")",
           Response.Status.NOT_FOUND, e);
     } catch (NoTaskScheduledException e) {
       throw new ControllerApplicationException(LOGGER,
           "No task is generated for table: " + adhocTaskConfig.getTableName() + ", with task type: "
-              + adhocTaskConfig.getTaskType(), Response.Status.BAD_REQUEST);
+              + adhocTaskConfig.getTaskType() + " (" + e.getMessage() + ")", Response.Status.BAD_REQUEST);
     } catch (Exception e) {
       throw new ControllerApplicationException(LOGGER,
           "Failed to create adhoc task: " + ExceptionUtils.getStackTrace(e), Response.Status.INTERNAL_SERVER_ERROR, e);
