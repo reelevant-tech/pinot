@@ -81,11 +81,11 @@ export const getAxiosResponseInterceptor = (): (<T>(
     return fulfilledResponseInterceptor;
 };
 
-export const baseApi = axiosCache.setupCache(axios.create({ baseURL: 'http://pinot.production.internal.reelevant.io:9000/' }));
+export const baseApi = axiosCache.setupCache(axios.create({ baseURL: '/' }));
 baseApi.interceptors.request.use(getAxiosRequestInterceptor(), getAxiosErrorInterceptor());
 baseApi.interceptors.response.use(getAxiosResponseInterceptor(), getAxiosErrorInterceptor());
 
-export const transformApi = axios.create({baseURL: 'http://pinot.production.internal.reelevant.io:9000/', transformResponse: [data => data]});
+export const transformApi = axios.create({baseURL: '/', transformResponse: [data => data]});
 transformApi.interceptors.request.use(getAxiosRequestInterceptor(), getAxiosErrorInterceptor());
 transformApi.interceptors.response.use(getAxiosResponseInterceptor(), getAxiosErrorInterceptor());
 
@@ -94,6 +94,6 @@ transformApi.interceptors.response.use(getAxiosResponseInterceptor(), getAxiosEr
 // changing the handleError method of baseApi will cause current UI to break (as UI might have not handle error properly)
 // creating a new axios instance baseApiWithErrors which can be used when adding new API's
 // NOTE: It is an add-on utility and can be used in case you want to handle/show UI when API fails.
-export const baseApiWithErrors = axiosCache.setupCache(axios.create({ baseURL: 'http://pinot.production.internal.reelevant.io:9000/' }));
+export const baseApiWithErrors = axiosCache.setupCache(axios.create({ baseURL: '/' }));
 baseApiWithErrors.interceptors.request.use(getAxiosRequestInterceptor());
 baseApiWithErrors.interceptors.response.use(getAxiosResponseInterceptor());
