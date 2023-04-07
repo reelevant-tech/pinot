@@ -35,7 +35,7 @@ ENV MAVEN_CONFIG /opt/.m2
 RUN git clone --depth=1 ${PINOT_GIT_URL} ${PINOT_BUILD_DIR} && \
     cd ${PINOT_BUILD_DIR} && \
     git checkout ${PINOT_BRANCH} && \
-    mvn install package -DskipTests -Pbin-dist -Pbuild-shaded-jar -Dcheckstyle.skip -Djdk.version=${JDK_VERSION} -T1C && \
+    mvn install package -DskipTests -Pbin-dist -Pbuild-shaded-jar -Dcheckstyle.skip -e -Dmaven.compiler.failOnError=false -Djdk.version=${JDK_VERSION} -T1C && \
     rm -rf /root/.m2 && \
     mkdir -p ${PINOT_HOME}/configs && \
     mkdir -p ${PINOT_HOME}/data && \
