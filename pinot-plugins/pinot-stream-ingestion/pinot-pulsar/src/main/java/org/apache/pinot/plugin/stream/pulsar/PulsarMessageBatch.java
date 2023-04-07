@@ -28,7 +28,6 @@ import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.impl.BatchMessageIdImpl;
 import org.apache.pulsar.client.impl.MessageIdImpl;
-import org.apache.pulsar.client.internal.DefaultImplementation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
