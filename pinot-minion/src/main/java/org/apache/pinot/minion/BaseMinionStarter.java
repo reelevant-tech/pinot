@@ -20,6 +20,7 @@ package org.apache.pinot.minion;
 
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.nixxcode.jvmbrotli.dec.BrotliInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -32,7 +33,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.SSLContext;
-import org.apache.commons.compress.compressors.brotli.BrotliCompressorInputStream;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.helix.HelixManager;
@@ -186,7 +186,7 @@ public abstract class BaseMinionStarter implements ServiceStartable {
       ByteArrayInputStream bais = new ByteArrayInputStream(compressedValues.getBytes(StandardCharsets.US_ASCII));
       try {
         // Decompress values with brotli
-        BrotliCompressorInputStream stream = new BrotliCompressorInputStream(bais);
+        BrotliInputStream stream = new BrotliInputStream(bais);
         String result = "";
         byte[] buf = new byte[512];
         int rlen = -1;
