@@ -20,6 +20,7 @@ package org.apache.pinot.minion;
 
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.nixxcode.jvmbrotli.common.BrotliLoader;
 import com.nixxcode.jvmbrotli.dec.BrotliInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -125,6 +126,9 @@ public abstract class BaseMinionStarter implements ServiceStartable {
     _executorService =
         Executors.newCachedThreadPool(new ThreadFactoryBuilder().setNameFormat("async-task-thread-%d").build());
     MinionEventObservers.init(_config, _executorService);
+    if (BrotliLoader.isBrotliAvailable() == false) {
+      LOGGER.error("Cannot load brotli lib");
+    }
   }
 
   private void setupHelixSystemProperties() {
