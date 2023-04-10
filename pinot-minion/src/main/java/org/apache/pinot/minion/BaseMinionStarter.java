@@ -25,8 +25,8 @@ import com.nixxcode.jvmbrotli.dec.BrotliInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -187,7 +187,7 @@ public abstract class BaseMinionStarter implements ServiceStartable {
       String columnName = configs.getConfigs().get(MinionConstants.PurgeTask.MATCHING_COLUMN_NAME);
       Set<String> columnValues = new HashSet<String>();
       String compressedValues = configs.getConfigs().get(MinionConstants.PurgeTask.MATCHING_COLUMN_VALUES);
-      ByteArrayInputStream bais = new ByteArrayInputStream(compressedValues.getBytes(StandardCharsets.US_ASCII));
+      ByteArrayInputStream bais = new ByteArrayInputStream(Base64.getDecoder().decode(compressedValues));
       try {
         // Decompress values with brotli
         BrotliInputStream stream = new BrotliInputStream(bais);
