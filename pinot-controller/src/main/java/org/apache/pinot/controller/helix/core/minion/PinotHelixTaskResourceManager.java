@@ -302,9 +302,9 @@ public class PinotHelixTaskResourceManager {
     _taskDriver.enqueueJob(getHelixJobQueueName(taskType), parentTaskName, jobBuilder);
 
     // Wait until task state is available
-    while (getTaskState(parentTaskName) == null) {
-      Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
-    }
+    // while (getTaskState(parentTaskName) == null) {
+    //   Uninterruptibles.sleepUninterruptibly(1000, TimeUnit.MILLISECONDS);
+    // }
 
     return parentTaskName;
   }
