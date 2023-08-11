@@ -30,6 +30,7 @@ import org.joda.time.Chronology;
 import org.joda.time.DateTimeField;
 import org.joda.time.DateTimeZone;
 import org.joda.time.chrono.ISOChronology;
+import org.roaringbitmap.RoaringBitmap;
 
 
 public abstract class DateTimeTransformFunction extends BaseTransformFunction {
@@ -72,9 +73,7 @@ public abstract class DateTimeTransformFunction extends BaseTransformFunction {
   @Override
   public int[] transformToIntValuesSV(ValueBlock valueBlock) {
     int numDocs = valueBlock.getNumDocs();
-    if (_intValuesSV == null) {
-      _intValuesSV = new int[numDocs];
-    }
+    initIntValuesSV(numDocs);
     long[] timestamps = _timestampsFunction.transformToLongValuesSV(valueBlock);
     convert(timestamps, numDocs, _intValuesSV);
     return _intValuesSV;
@@ -260,5 +259,10 @@ public abstract class DateTimeTransformFunction extends BaseTransformFunction {
         output[i] = (accessor.get(timestamps[i]) - 1) / 3 + 1;
       }
     }
+  }
+
+  @Override
+  public RoaringBitmap getNullBitmap(ValueBlock valueBlock) {
+    return _timestampsFunction.getNullBitmap(valueBlock);
   }
 }

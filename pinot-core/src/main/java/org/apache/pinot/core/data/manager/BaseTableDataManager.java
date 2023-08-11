@@ -32,14 +32,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.configuration.ConfigurationConverter;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.helix.HelixManager;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
@@ -97,6 +100,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
   protected File _resourceTmpDir;
   protected Logger _logger;
   protected HelixManager _helixManager;
+  protected ExecutorService _segmentPreloadExecutor;
   protected AuthProvider _authProvider;
   protected long _streamSegmentDownloadUntarRateLimitBytesPerSec;
   protected boolean _isStreamSegmentDownloadUntar;
@@ -112,6 +116,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
   @Override
   public void init(TableDataManagerConfig tableDataManagerConfig, String instanceId,
       ZkHelixPropertyStore<ZNRecord> propertyStore, ServerMetrics serverMetrics, HelixManager helixManager,
+      @Nullable ExecutorService segmentPreloadExecutor,
       @Nullable LoadingCache<Pair<String, String>, SegmentErrorInfo> errorCache,
       TableDataManagerParams tableDataManagerParams) {
     LOGGER.info("Initializing table data manager for table: {}", tableDataManagerConfig.getTableName());
@@ -121,6 +126,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
     _propertyStore = propertyStore;
     _serverMetrics = serverMetrics;
     _helixManager = helixManager;
+    _segmentPreloadExecutor = segmentPreloadExecutor;
 
     _authProvider =
         AuthProviderUtils.extractAuthProvider(toPinotConfiguration(_tableDataManagerConfig.getAuthConfig()), null);
@@ -227,6 +233,7 @@ public abstract class BaseTableDataManager implements TableDataManager {
   public void addSegment(File indexDir, IndexLoadingConfig indexLoadingConfig)
       throws Exception {
     indexLoadingConfig.setTableDataDir(_tableDataDir);
+    indexLoadingConfig.setInstanceTierConfigs(_tableDataManagerConfig.getInstanceTierConfigs());
     addSegment(ImmutableSegmentLoader.load(indexDir, indexLoadingConfig, indexLoadingConfig.getSchema()));
   }
 
@@ -627,14 +634,21 @@ public abstract class BaseTableDataManager implements TableDataManager {
     LOGGER.info("Trying to download segment {} using streamed download-untar with maxStreamRateInByte {}", segmentName,
         maxStreamRateInByte);
     String uri = zkMetadata.getDownloadUrl();
+    AtomicInteger attempts = new AtomicInteger(0);
     try {
-      File ret = SegmentFetcherFactory.fetchAndStreamUntarToLocal(uri, tempRootDir, maxStreamRateInByte);
-      LOGGER.info("Download and untarred segment: {} for table: {} from: {}", segmentName, _tableNameWithType, uri);
-      return ret;
-    } catch (AttemptsExceededException e) {
-      LOGGER.error("Attempts exceeded when stream download-untarring segment: {} for table: {} from: {} to: {}",
-          segmentName, _tableNameWithType, uri, tempRootDir);
-      _serverMetrics.addMeteredTableValue(_tableNameWithType, ServerMeter.SEGMENT_STREAMED_DOWNLOAD_UNTAR_FAILURES, 1L);
+        File ret = SegmentFetcherFactory.fetchAndStreamUntarToLocal(uri, tempRootDir, maxStreamRateInByte, attempts);
+        _serverMetrics.addMeteredTableValue(_tableNameWithType, ServerMeter.SEGMENT_STREAMED_DOWNLOAD_UNTAR_FAILURES,
+            attempts.get());
+        LOGGER.info("Downloaded and untarred segment: {} for table: {} from: {} attempts: {}", segmentName,
+            _tableNameWithType, uri, attempts.get());
+        return ret;
+    } catch (Exception e) {
+      _serverMetrics.addMeteredTableValue(_tableNameWithType, ServerMeter.SEGMENT_STREAMED_DOWNLOAD_UNTAR_FAILURES,
+          attempts.get());
+      if (e instanceof AttemptsExceededException) {
+        LOGGER.error("Attempts exceeded when stream download-untarring segment: {} for table: {} from: {} to: {}",
+            segmentName, _tableNameWithType, uri, tempRootDir);
+      }
       throw e;
     } finally {
       if (_segmentDownloadSemaphore != null) {
@@ -672,21 +686,18 @@ public abstract class BaseTableDataManager implements TableDataManager {
     return new File(_indexDir, segmentName);
   }
 
-  @VisibleForTesting
-  File getSegmentDataDir(String segmentName, @Nullable String segmentTier, TableConfig tableConfig) {
+  @Override
+  public File getSegmentDataDir(String segmentName, @Nullable String segmentTier, TableConfig tableConfig) {
     if (segmentTier == null) {
       return getSegmentDataDir(segmentName);
     }
-    try {
-      String tierDataDir =
-          TierConfigUtils.getDataDirForTier(tableConfig, segmentTier, _tableDataManagerConfig.getInstanceTierConfigs());
-      File tierTableDataDir = new File(tierDataDir, _tableNameWithType);
-      return new File(tierTableDataDir, segmentName);
-    } catch (Exception e) {
-      LOGGER.warn("Failed to get dataDir for segment: {} of table: {} on tier: {} due to error: {}", segmentName,
-          _tableNameWithType, segmentTier, e.getMessage());
+    String tierDataDir =
+        TierConfigUtils.getDataDirForTier(tableConfig, segmentTier, _tableDataManagerConfig.getInstanceTierConfigs());
+    if (StringUtils.isEmpty(tierDataDir)) {
       return getSegmentDataDir(segmentName);
     }
+    File tierTableDataDir = new File(tierDataDir, _tableNameWithType);
+    return new File(tierTableDataDir, segmentName);
   }
 
   @Nullable
@@ -757,7 +768,8 @@ public abstract class BaseTableDataManager implements TableDataManager {
    * object may be created when trying to load the segment, but it's closed if the method
    * returns false; otherwise it's opened and to be referred by ImmutableSegment object.
    */
-  protected boolean tryLoadExistingSegment(String segmentName, IndexLoadingConfig indexLoadingConfig,
+  @Override
+  public boolean tryLoadExistingSegment(String segmentName, IndexLoadingConfig indexLoadingConfig,
       SegmentZKMetadata zkMetadata) {
     // Try to recover the segment from potential segment reloading failure.
     String segmentTier = zkMetadata.getTier();

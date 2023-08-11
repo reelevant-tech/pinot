@@ -121,6 +121,9 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
   //
   private static final String MAX_PARALLEL_REFRESH_THREADS = "max.parallel.refresh.threads";
 
+  // To preload segments of table using upsert in parallel for fast upsert metadata recovery.
+  private static final String MAX_SEGMENT_PRELOAD_THREADS = "max.segment.preload.threads";
+
   // Size of cache that holds errors.
   private static final String ERROR_CACHE_SIZE = "error.cache.size";
 
@@ -128,10 +131,17 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
   private static final String DELETED_SEGMENTS_CACHE_TTL_MINUTES = "table.deleted.segments.cache.ttl.minutes";
   private static final String PEER_DOWNLOAD_SCHEME = "peer.download.scheme";
 
+  // Check if the external view is dropped for a table, and if so, wait for the external view to
+  // be updated for a maximum of this time.
+  private static final String EXTERNAL_VIEW_DROPPED_MAX_WAIT_MS = "external.view.dropped.max.wait.ms";
+  private static final String EXTERNAL_VIEW_DROPPED_CHECK_INTERVAL_MS = "external.view.dropped.check.interval.ms";
+
   private final static String[] REQUIRED_KEYS = {INSTANCE_ID};
   private static final long DEFAULT_ERROR_CACHE_SIZE = 100L;
   private static final int DEFAULT_DELETED_SEGMENTS_CACHE_SIZE = 10_000;
   private static final int DEFAULT_DELETED_SEGMENTS_CACHE_TTL_MINUTES = 2;
+  public static final long DEFAULT_EXTERNAL_VIEW_DROPPED_MAX_WAIT_MS = 20 * 60_000L;
+  public static final long DEFAULT_EXTERNAL_VIEW_DROPPED_CHECK_INTERVAL_MS = 1_000L;
 
   private final PinotConfiguration _instanceDataManagerConfiguration;
 
@@ -233,6 +243,10 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
     return _instanceDataManagerConfiguration.getProperty(MAX_PARALLEL_REFRESH_THREADS, 1);
   }
 
+  public int getMaxSegmentPreloadThreads() {
+    return _instanceDataManagerConfiguration.getProperty(MAX_SEGMENT_PRELOAD_THREADS, 0);
+  }
+
   public int getMaxParallelSegmentBuilds() {
     return _instanceDataManagerConfiguration
         .getProperty(MAX_PARALLEL_SEGMENT_BUILDS, DEFAULT_MAX_PARALLEL_SEGMENT_BUILDS);
@@ -281,6 +295,18 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
   @Override
   public String getSegmentPeerDownloadScheme() {
     return _instanceDataManagerConfiguration.getProperty(PEER_DOWNLOAD_SCHEME);
+  }
+
+  @Override
+  public long getExternalViewDroppedMaxWaitMs() {
+    return _instanceDataManagerConfiguration.getProperty(EXTERNAL_VIEW_DROPPED_MAX_WAIT_MS,
+        DEFAULT_EXTERNAL_VIEW_DROPPED_MAX_WAIT_MS);
+  }
+
+  @Override
+  public long getExternalViewDroppedCheckIntervalMs() {
+    return _instanceDataManagerConfiguration.getProperty(EXTERNAL_VIEW_DROPPED_CHECK_INTERVAL_MS,
+        DEFAULT_EXTERNAL_VIEW_DROPPED_CHECK_INTERVAL_MS);
   }
 
   @Override

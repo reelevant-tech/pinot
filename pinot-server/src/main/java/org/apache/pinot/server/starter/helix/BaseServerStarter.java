@@ -68,6 +68,7 @@ import org.apache.pinot.core.data.manager.InstanceDataManager;
 import org.apache.pinot.core.data.manager.realtime.RealtimeConsumptionRateManager;
 import org.apache.pinot.core.transport.ListenerConfig;
 import org.apache.pinot.core.util.ListenerConfigUtil;
+import org.apache.pinot.query.service.QueryConfig;
 import org.apache.pinot.segment.local.realtime.impl.invertedindex.RealtimeLuceneIndexRefreshState;
 import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
 import org.apache.pinot.server.access.AccessControlFactory;
@@ -86,6 +87,7 @@ import org.apache.pinot.spi.filesystem.PinotFSFactory;
 import org.apache.pinot.spi.plugin.PluginManager;
 import org.apache.pinot.spi.services.ServiceRole;
 import org.apache.pinot.spi.services.ServiceStartable;
+import org.apache.pinot.spi.trace.Tracing;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.CommonConstants.Helix;
 import org.apache.pinot.spi.utils.CommonConstants.Helix.Instance;
@@ -170,6 +172,12 @@ public abstract class BaseServerStarter implements ServiceStartable {
       // NOTE: Need to add the instance id to the config because it is required in HelixInstanceDataManagerConfig
       _serverConf.addProperty(Server.CONFIG_OF_INSTANCE_ID, _instanceId);
     }
+    if (_serverConf.getProperty(QueryConfig.KEY_OF_QUERY_SERVER_PORT, QueryConfig.DEFAULT_QUERY_SERVER_PORT) == 0) {
+      _serverConf.setProperty(QueryConfig.KEY_OF_QUERY_SERVER_PORT, NetUtils.findOpenPort());
+    }
+    if (_serverConf.getProperty(QueryConfig.KEY_OF_QUERY_RUNNER_PORT, QueryConfig.DEFAULT_QUERY_RUNNER_PORT) == 0) {
+      _serverConf.setProperty(QueryConfig.KEY_OF_QUERY_RUNNER_PORT, NetUtils.findOpenPort());
+    }
 
     _instanceConfigScope =
         new HelixConfigScopeBuilder(ConfigScopeProperty.PARTICIPANT, _helixClusterName).forParticipant(_instanceId)
@@ -177,6 +185,9 @@ public abstract class BaseServerStarter implements ServiceStartable {
 
     // Initialize Pinot Environment Provider
     _pinotEnvironmentProvider = initializePinotEnvironmentProvider();
+
+    // Initialize the data buffer factory
+    PinotDataBuffer.loadDefaultFactory(serverConf);
 
     // Enable/disable thread CPU time measurement through instance config.
     ThreadResourceUsageProvider.setThreadCpuTimeMeasurementEnabled(
@@ -541,6 +552,9 @@ public abstract class BaseServerStarter implements ServiceStartable {
     ServerMetrics serverMetrics = _serverInstance.getServerMetrics();
     InstanceDataManager instanceDataManager = _serverInstance.getInstanceDataManager();
     instanceDataManager.setSupplierOfIsServerReadyToServeQueries(() -> _isServerReadyToServeQueries);
+    // initialize the thread accountant for query killing
+    Tracing.ThreadAccountantOps
+        .initializeThreadAccountant(_serverConf.subset(CommonConstants.PINOT_QUERY_SCHEDULER_PREFIX), _instanceId);
     initSegmentFetcher(_serverConf);
     StateModelFactory<?> stateModelFactory =
         new SegmentOnlineOfflineStateModelFactory(_instanceId, instanceDataManager);
@@ -584,6 +598,8 @@ public abstract class BaseServerStarter implements ServiceStartable {
       startupServiceStatusCheck(endTimeMs);
     }
 
+    preServeQueries();
+
     // Start the query server after finishing the service status check. If the query server is started before all the
     // segments are loaded, broker might not have finished processing the callback of routing table update, and start
     // querying the server pre-maturely.
@@ -612,17 +628,17 @@ public abstract class BaseServerStarter implements ServiceStartable {
     _realtimeLuceneIndexRefreshState.start();
   }
 
+  /**
+   * Can be overridden to perform operations before server starts serving queries.
+   */
+  protected void preServeQueries() {
+  }
+
   @Override
   public void stop() {
     LOGGER.info("Shutting down Pinot server");
     long startTimeMs = System.currentTimeMillis();
 
-    try {
-      LOGGER.info("Closing PinotFS classes");
-      PinotFSFactory.shutdown();
-    } catch (IOException e) {
-      LOGGER.warn("Caught exception closing PinotFS classes", e);
-    }
     _adminApiApplication.startShuttingDown();
     _helixAdmin.setConfig(_instanceConfigScope,
         Collections.singletonMap(Helix.IS_SHUTDOWN_IN_PROGRESS, Boolean.toString(true)));
@@ -641,6 +657,14 @@ public abstract class BaseServerStarter implements ServiceStartable {
     }
     _serverQueriesDisabledTracker.stop();
     _realtimeLuceneIndexRefreshState.stop();
+    try {
+      // Close PinotFS after all data managers are shutdown. Otherwise, segments which are being committed will not
+      // be uploaded to the deep-store.
+      LOGGER.info("Closing PinotFS classes");
+      PinotFSFactory.shutdown();
+    } catch (IOException e) {
+      LOGGER.warn("Caught exception closing PinotFS classes", e);
+    }
     LOGGER.info("Deregistering service status handler");
     ServiceStatus.removeServiceStatusCallback(_instanceId);
     _adminApiApplication.stop();
@@ -664,13 +688,15 @@ public abstract class BaseServerStarter implements ServiceStartable {
     boolean noIncomingQueries = false;
     long currentTimeMs;
     while ((currentTimeMs = System.currentTimeMillis()) < endTimeMs) {
-      long noQueryTimeMs = currentTimeMs - _serverInstance.getLatestQueryTime();
+      // Ensure we wait the full noQueryTimeMs since the start of shutdown
+      long noQueryTimeMs = currentTimeMs - Math.max(startTimeMs, _serverInstance.getLatestQueryTime());
       if (noQueryTimeMs >= noQueryThresholdMs) {
         LOGGER.info("No query received within {}ms (larger than the threshold: {}ms), mark it as no incoming queries",
             noQueryTimeMs, noQueryThresholdMs);
         noIncomingQueries = true;
         break;
       }
+      // Otherwise sleep the difference, or use shutdown execution timeout if it's smaller
       long sleepTimeMs = Math.min(noQueryThresholdMs - noQueryTimeMs, endTimeMs - currentTimeMs);
       LOGGER.info(
           "Sleep for {}ms as there are still incoming queries (no query time: {}ms is smaller than the threshold: "

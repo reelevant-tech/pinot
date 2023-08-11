@@ -18,11 +18,9 @@
  */
 package org.apache.pinot.query.runtime.operator;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.function.Consumer;
 import org.apache.pinot.core.common.Operator;
-import org.apache.pinot.query.mailbox.MailboxIdentifier;
 import org.apache.pinot.query.runtime.blocks.TransferableBlock;
 import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
 
@@ -33,28 +31,34 @@ import org.apache.pinot.query.runtime.plan.OpChainExecutionContext;
  */
 public class OpChain implements AutoCloseable {
   private final MultiStageOperator _root;
-  private final Set<MailboxIdentifier> _receivingMailbox;
-  private final OpChainStats _stats;
+  private final List<String> _receivingMailboxIds;
   private final OpChainId _id;
+  private final OpChainStats _stats;
+  private final Consumer<OpChainId> _opChainFinishCallback;
 
-  public OpChain(MultiStageOperator root, List<MailboxIdentifier> receivingMailboxes, int virtualServerId,
-      long requestId, int stageId) {
-    _root = root;
-    _receivingMailbox = new HashSet<>(receivingMailboxes);
-    _id = new OpChainId(requestId, virtualServerId, stageId);
-    _stats = new OpChainStats(_id.toString());
+  public OpChain(OpChainExecutionContext context, MultiStageOperator root, List<String> receivingMailboxIds) {
+    this(context, root, receivingMailboxIds, (id) -> { });
   }
 
-  public OpChain(OpChainExecutionContext context, MultiStageOperator root, List<MailboxIdentifier> receivingMailboxes) {
-    this(root, receivingMailboxes, context.getServer().virtualId(), context.getRequestId(), context.getStageId());
+  public OpChain(OpChainExecutionContext context, MultiStageOperator root, List<String> receivingMailboxIds,
+      Consumer<OpChainId> opChainFinishCallback) {
+    _root = root;
+    _receivingMailboxIds = receivingMailboxIds;
+    _id = context.getId();
+    _stats = context.getStats();
+    _opChainFinishCallback = opChainFinishCallback;
   }
 
   public Operator<TransferableBlock> getRoot() {
     return _root;
   }
 
-  public Set<MailboxIdentifier> getReceivingMailbox() {
-    return _receivingMailbox;
+  public List<String> getReceivingMailboxIds() {
+    return _receivingMailboxIds;
+  }
+
+  public Consumer<OpChainId> getOpChainFinishCallback() {
+    return _opChainFinishCallback;
   }
 
   public OpChainId getId() {

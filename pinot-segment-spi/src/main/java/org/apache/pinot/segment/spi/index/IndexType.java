@@ -23,6 +23,8 @@ import javax.annotation.Nullable;
 import org.apache.pinot.segment.spi.ColumnMetadata;
 import org.apache.pinot.segment.spi.creator.IndexCreationContext;
 import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
+import org.apache.pinot.segment.spi.index.mutable.MutableIndex;
+import org.apache.pinot.segment.spi.index.mutable.provider.MutableIndexContext;
 import org.apache.pinot.segment.spi.store.SegmentDirectory;
 import org.apache.pinot.spi.config.table.IndexConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
@@ -30,7 +32,6 @@ import org.apache.pinot.spi.data.Schema;
 
 
 /**
- * TODO: implement mutable indexes.
  * @param <C> the class that represents how this object is configured.
  * @param <IR> the {@link IndexReader} subclass that should be used to read indexes of this type.
  * @param <IC> the {@link IndexCreator} subclass that should be used to create indexes of this type.
@@ -59,22 +60,10 @@ public interface IndexType<C extends IndexConfig, IR extends IndexReader, IC ext
    */
   C getDefaultConfig();
 
-  C getConfig(TableConfig tableConfig, Schema schema);
+  Map<String, C> getConfig(TableConfig tableConfig, Schema schema);
 
-  /**
-   * Optional method that can be implemented to ignore the index creation.
-   *
-   * Sometimes it doesn't make sense to create an index, even when the user explicitly asked for it. For example, an
-   * inverted index shouldn't be created when the column is sorted.
-   *
-   * Apache Pinot will call this method once all index configurations have been parsed and it is included in the
-   * {@link FieldIndexConfigs} param.
-   *
-   * This method do not need to return false when the index type itself is not included in the {@link FieldIndexConfigs}
-   * param.
-   */
-  default boolean shouldBeCreated(IndexCreationContext context, FieldIndexConfigs configs) {
-    return true;
+  default String getPrettyName() {
+    return getId();
   }
 
   /**
@@ -102,20 +91,33 @@ public interface IndexType<C extends IndexConfig, IR extends IndexReader, IC ext
    */
   @Nullable
   default IR getIndexReader(ColumnIndexContainer indexContainer) {
-    throw new UnsupportedOperationException();
+    return indexContainer.getIndex(this);
   }
 
   String getFileExtension(ColumnMetadata columnMetadata);
 
-  /**
-   * Returns whether the index is stored as a buffer or not.
-   *
-   * Most indexes are stored as a buffer, but for example TextIndexType is stored in a separate lucene file.
-   */
-  default boolean storedAsBuffer() {
-    return true;
-  }
-
   IndexHandler createIndexHandler(SegmentDirectory segmentDirectory, Map<String, FieldIndexConfigs> configsByCol,
       @Nullable Schema schema, @Nullable TableConfig tableConfig);
+
+  /**
+   * This method is used to perform in place conversion of provided {@link TableConfig} to newer format
+   * related to the IndexType that implements it.
+   *
+   * {@link AbstractIndexType#convertToNewFormat(TableConfig, Schema)} ensures all the index information from old format
+   * is made available in the new format while it depends on the individual index types to handle the data cleanup from
+   * old format.
+   */
+  void convertToNewFormat(TableConfig tableConfig, Schema schema);
+
+  /**
+   * Creates a mutable index.
+   *
+   * Implementations return null if the index type doesn't support mutable indexes. Some indexes may support mutable
+   * index only in some conditions. For example, they may only be supported if there is a dictionary or if the column is
+   * single-valued.
+   */
+  @Nullable
+  default MutableIndex createMutableIndex(MutableIndexContext context, C config) {
+    return null;
+  }
 }

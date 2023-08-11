@@ -48,16 +48,25 @@ public enum ServerGauge implements AbstractMetrics.Gauge {
   JVM_HEAP_USED_BYTES("bytes", true),
   // Ingestion delay metrics
   REALTIME_INGESTION_DELAY_MS("milliseconds", false),
-  END_TO_END_REALTIME_INGESTION_DELAY_MS("milliseconds", false);
+  END_TO_END_REALTIME_INGESTION_DELAY_MS("milliseconds", false),
+  // Needed to track if valid doc id snapshots are present for faster restarts
+  UPSERT_VALID_DOC_ID_SNAPSHOT_COUNT("upsertValidDocIdSnapshotCount", false);
 
   private final String _gaugeName;
   private final String _unit;
   private final boolean _global;
 
+  private final String _description;
+
   ServerGauge(String unit, boolean global) {
+    this(unit, global, "");
+  }
+
+  ServerGauge(String unit, boolean global, String description) {
     _unit = unit;
     _global = global;
     _gaugeName = Utils.toCamelCase(name().toLowerCase());
+    _description = description;
   }
 
   @Override
@@ -78,5 +87,10 @@ public enum ServerGauge implements AbstractMetrics.Gauge {
   @Override
   public boolean isGlobal() {
     return _global;
+  }
+
+  @Override
+  public String getDescription() {
+    return _description;
   }
 }

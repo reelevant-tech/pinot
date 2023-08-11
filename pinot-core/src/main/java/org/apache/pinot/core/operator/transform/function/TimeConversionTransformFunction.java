@@ -26,6 +26,7 @@ import org.apache.pinot.core.operator.blocks.ValueBlock;
 import org.apache.pinot.core.operator.transform.TransformResultMetadata;
 import org.apache.pinot.core.operator.transform.transformer.timeunit.TimeUnitTransformer;
 import org.apache.pinot.core.operator.transform.transformer.timeunit.TimeUnitTransformerFactory;
+import org.roaringbitmap.RoaringBitmap;
 
 
 public class TimeConversionTransformFunction extends BaseTransformFunction {
@@ -67,11 +68,13 @@ public class TimeConversionTransformFunction extends BaseTransformFunction {
   @Override
   public long[] transformToLongValuesSV(ValueBlock valueBlock) {
     int length = valueBlock.getNumDocs();
-    if (_longValuesSV == null) {
-      _longValuesSV = new long[length];
-    }
-    _timeUnitTransformer.transform(_mainTransformFunction.transformToLongValuesSV(valueBlock), _longValuesSV,
-        length);
+    initLongValuesSV(length);
+    _timeUnitTransformer.transform(_mainTransformFunction.transformToLongValuesSV(valueBlock), _longValuesSV, length);
     return _longValuesSV;
+  }
+
+  @Override
+  public RoaringBitmap getNullBitmap(ValueBlock valueBlock) {
+    return _mainTransformFunction.getNullBitmap(valueBlock);
   }
 }

@@ -60,8 +60,6 @@ public class PinotQueryRuleSets {
           CoreRules.PROJECT_MERGE,
           // remove identity project
           CoreRules.PROJECT_REMOVE,
-          // reorder sort and projection
-          CoreRules.SORT_PROJECT_TRANSPOSE,
 
           // convert OVER aggregate to logical WINDOW
           CoreRules.PROJECT_TO_LOGICAL_PROJECT_AND_WINDOW,
@@ -73,6 +71,7 @@ public class PinotQueryRuleSets {
           // join rules
           CoreRules.JOIN_PUSH_EXPRESSIONS,
           CoreRules.PROJECT_TO_SEMI_JOIN,
+          PinotAggregateToSemiJoinRule.INSTANCE,
 
           // convert non-all union into all-union + distinct
           CoreRules.UNION_TO_DISTINCT,
@@ -85,12 +84,7 @@ public class PinotQueryRuleSets {
           CoreRules.AGGREGATE_UNION_AGGREGATE,
 
           // reduce aggregate functions like AVG, STDDEV_POP etc.
-          PinotReduceAggregateFunctionsRule.INSTANCE,
-          CoreRules.AGGREGATE_REDUCE_FUNCTIONS,
-
-          // Expand all SEARCH nodes to simplified filter nodes. SEARCH nodes get created for queries with range
-          // predicates, in-clauses, etc.
-          PinotFilterExpandSearchRule.INSTANCE
+          CoreRules.AGGREGATE_REDUCE_FUNCTIONS
           );
 
   // Filter pushdown rules run using a RuleCollection since we want to push down a filter as much as possible in a
@@ -112,8 +106,19 @@ public class PinotQueryRuleSets {
       PruneEmptyRules.UNION_INSTANCE
   );
 
-  // Pinot specific rules that should be run after all other rules
+  // Pinot specific rules that should be run BEFORE all other rules
+  public static final Collection<RelOptRule> PINOT_PRE_RULES = ImmutableList.of(
+      PinotAggregateLiteralAttachmentRule.INSTANCE
+  );
+
+
+  // Pinot specific rules that should be run AFTER all other rules
   public static final Collection<RelOptRule> PINOT_POST_RULES = ImmutableList.of(
+      // Evaluate the Literal filter nodes
+      CoreRules.FILTER_REDUCE_EXPRESSIONS,
+      // Expand all SEARCH nodes to simplified filter nodes. SEARCH nodes get created for queries with range
+      // predicates, in-clauses, etc.
+      PinotFilterExpandSearchRule.INSTANCE,
       // add an extra exchange for sort
       PinotSortExchangeNodeInsertRule.INSTANCE,
       // copy exchanges down, this must be done after SortExchangeNodeInsertRule
@@ -121,6 +126,10 @@ public class PinotQueryRuleSets {
 
       PinotJoinExchangeNodeInsertRule.INSTANCE,
       PinotAggregateExchangeNodeInsertRule.INSTANCE,
-      PinotWindowExchangeNodeInsertRule.INSTANCE
+      PinotWindowExchangeNodeInsertRule.INSTANCE,
+      PinotSetOpExchangeNodeInsertRule.INSTANCE,
+
+      // apply dynamic broadcast rule after exchange is inserted/
+      PinotJoinToDynamicBroadcastRule.INSTANCE
   );
 }

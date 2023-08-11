@@ -21,7 +21,6 @@ package org.apache.pinot.query.runtime;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.math.DoubleMath;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -39,33 +38,43 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import org.apache.commons.codec.DecoderException;
 import org.apache.commons.codec.binary.Hex;
 import org.apache.pinot.common.response.broker.ResultTable;
+import org.apache.pinot.common.utils.NamedThreadFactory;
 import org.apache.pinot.core.query.reduce.ExecutionStatsAggregator;
-import org.apache.pinot.core.transport.ServerInstance;
 import org.apache.pinot.query.QueryEnvironment;
 import org.apache.pinot.query.QueryServerEnclosure;
 import org.apache.pinot.query.QueryTestSet;
-import org.apache.pinot.query.mailbox.GrpcMailboxService;
-import org.apache.pinot.query.planner.QueryPlan;
-import org.apache.pinot.query.planner.stage.MailboxReceiveNode;
-import org.apache.pinot.query.routing.VirtualServer;
+import org.apache.pinot.query.mailbox.MailboxService;
+import org.apache.pinot.query.planner.DispatchableSubPlan;
+import org.apache.pinot.query.planner.plannode.MailboxReceiveNode;
+import org.apache.pinot.query.routing.QueryServerInstance;
+import org.apache.pinot.query.routing.VirtualServerAddress;
+import org.apache.pinot.query.runtime.executor.OpChainSchedulerService;
 import org.apache.pinot.query.runtime.plan.DistributedStagePlan;
+import org.apache.pinot.query.runtime.plan.StageMetadata;
 import org.apache.pinot.query.service.QueryConfig;
 import org.apache.pinot.query.service.dispatch.QueryDispatcher;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
 import org.apache.pinot.spi.utils.ByteArray;
+import org.apache.pinot.spi.utils.BytesUtils;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.StringUtil;
+import org.apache.pinot.sql.parsers.CalciteSqlParser;
+import org.apache.pinot.sql.parsers.SqlNodeAndOptions;
 import org.h2.jdbc.JdbcArray;
 import org.testng.Assert;
 
 
 public abstract class QueryRunnerTestBase extends QueryTestSet {
+  protected static final ExecutorService REDUCE_EXECUTOR = Executors.newCachedThreadPool(
+      new NamedThreadFactory("TEST_REDUCER_SCHEDULER_EXECUTOR"));
   protected static final double DOUBLE_CMP_EPSILON = 0.0001d;
   protected static final String SEGMENT_BREAKER_KEY = "__SEGMENT_BREAKER_KEY__";
   protected static final String SEGMENT_BREAKER_STR = "------";
@@ -74,8 +83,9 @@ public abstract class QueryRunnerTestBase extends QueryTestSet {
   protected QueryEnvironment _queryEnvironment;
   protected String _reducerHostname;
   protected int _reducerGrpcPort;
-  protected Map<ServerInstance, QueryServerEnclosure> _servers = new HashMap<>();
-  protected GrpcMailboxService _mailboxService;
+  protected Map<QueryServerInstance, QueryServerEnclosure> _servers = new HashMap<>();
+  protected MailboxService _mailboxService;
+  protected OpChainSchedulerService _reducerScheduler;
 
   static {
     SEGMENT_BREAKER_ROW.putValue(SEGMENT_BREAKER_KEY, SEGMENT_BREAKER_STR);
@@ -84,33 +94,68 @@ public abstract class QueryRunnerTestBase extends QueryTestSet {
   // --------------------------------------------------------------------------
   // QUERY UTILS
   // --------------------------------------------------------------------------
+
+  /**
+   * Dispatch query to each pinot-server. The logic should mimic QueryDispatcher.submit() but does not actually make
+   * ser/de dispatches.
+   */
   protected List<Object[]> queryRunner(String sql, Map<Integer, ExecutionStatsAggregator> executionStatsAggregatorMap) {
-    QueryPlan queryPlan = _queryEnvironment.planQuery(sql);
     long requestId = RANDOM_REQUEST_ID_GEN.nextLong();
-    Map<String, String> requestMetadataMap =
-        ImmutableMap.of(QueryConfig.KEY_OF_BROKER_REQUEST_ID, String.valueOf(requestId),
-            QueryConfig.KEY_OF_BROKER_REQUEST_TIMEOUT_MS,
-            String.valueOf(CommonConstants.Broker.DEFAULT_BROKER_TIMEOUT_MS));
+    SqlNodeAndOptions sqlNodeAndOptions = CalciteSqlParser.compileToSqlNodeAndOptions(sql);
+    QueryEnvironment.QueryPlannerResult queryPlannerResult =
+        _queryEnvironment.planQuery(sql, sqlNodeAndOptions, requestId);
+    DispatchableSubPlan dispatchableSubPlan = queryPlannerResult.getQueryPlan();
+    Map<String, String> requestMetadataMap = new HashMap<>();
+    requestMetadataMap.put(QueryConfig.KEY_OF_BROKER_REQUEST_ID, String.valueOf(requestId));
+    requestMetadataMap.put(QueryConfig.KEY_OF_BROKER_REQUEST_TIMEOUT_MS,
+        String.valueOf(CommonConstants.Broker.DEFAULT_BROKER_TIMEOUT_MS));
+    requestMetadataMap.putAll(sqlNodeAndOptions.getOptions());
+
+    // Putting trace testing here as extra options as it doesn't go along with the rest of the items.
+    if (executionStatsAggregatorMap != null) {
+      requestMetadataMap.put(CommonConstants.Broker.Request.TRACE, "true");
+    }
+
     int reducerStageId = -1;
-    for (int stageId : queryPlan.getStageMetadataMap().keySet()) {
-      if (queryPlan.getQueryStageMap().get(stageId) instanceof MailboxReceiveNode) {
+    for (int stageId = 0; stageId < dispatchableSubPlan.getQueryStageList().size(); stageId++) {
+      if (dispatchableSubPlan.getQueryStageList().get(stageId).getPlanFragment()
+          .getFragmentRoot() instanceof MailboxReceiveNode) {
         reducerStageId = stageId;
       } else {
-        for (VirtualServer serverInstance : queryPlan.getStageMetadataMap().get(stageId).getServerInstances()) {
-          DistributedStagePlan distributedStagePlan =
-              QueryDispatcher.constructDistributedStagePlan(queryPlan, stageId, serverInstance);
-          _servers.get(serverInstance.getServer()).processQuery(distributedStagePlan, requestMetadataMap);
-        }
+        processDistributedStagePlans(dispatchableSubPlan, stageId, requestMetadataMap);
       }
       if (executionStatsAggregatorMap != null) {
         executionStatsAggregatorMap.put(stageId, new ExecutionStatsAggregator(true));
       }
     }
     Preconditions.checkState(reducerStageId != -1);
-    ResultTable resultTable = QueryDispatcher.runReducer(requestId, queryPlan, reducerStageId,
+    ResultTable resultTable = QueryDispatcher.runReducer(requestId, dispatchableSubPlan, reducerStageId,
         Long.parseLong(requestMetadataMap.get(QueryConfig.KEY_OF_BROKER_REQUEST_TIMEOUT_MS)), _mailboxService,
-        executionStatsAggregatorMap);
+        _reducerScheduler, executionStatsAggregatorMap, true);
     return resultTable.getRows();
+  }
+
+  protected void processDistributedStagePlans(DispatchableSubPlan dispatchableSubPlan, int stageId,
+      Map<String, String> requestMetadataMap) {
+    Map<QueryServerInstance, List<Integer>> serverInstanceToWorkerIdMap =
+        dispatchableSubPlan.getQueryStageList().get(stageId).getServerInstanceToWorkerIdMap();
+    for (Map.Entry<QueryServerInstance, List<Integer>> entry : serverInstanceToWorkerIdMap.entrySet()) {
+      QueryServerInstance server = entry.getKey();
+      for (int workerId : entry.getValue()) {
+        DistributedStagePlan distributedStagePlan = constructDistributedStagePlan(
+            dispatchableSubPlan, stageId, new VirtualServerAddress(server, workerId));
+        _servers.get(server).processQuery(distributedStagePlan, requestMetadataMap);
+      }
+    }
+  }
+
+  protected static DistributedStagePlan constructDistributedStagePlan(DispatchableSubPlan dispatchableSubPlan,
+      int stageId, VirtualServerAddress serverAddress) {
+    return new DistributedStagePlan(stageId, serverAddress,
+        dispatchableSubPlan.getQueryStageList().get(stageId).getPlanFragment().getFragmentRoot(),
+        new StageMetadata.Builder().setWorkerMetadataList(
+                dispatchableSubPlan.getQueryStageList().get(stageId).getWorkerMetadataList())
+            .addCustomProperties(dispatchableSubPlan.getQueryStageList().get(stageId).getCustomProperties()).build());
   }
 
   protected List<Object[]> queryH2(String sql)
@@ -181,6 +226,9 @@ public abstract class QueryRunnerTestBase extends QueryTestSet {
         }
         return Double.compare(ld, rd);
       } else if (l instanceof String) {
+        if (r instanceof byte[]) {
+          return ((String) l).compareTo(BytesUtils.toHexString((byte[]) r));
+        }
         return ((String) l).compareTo((String) r);
       } else if (l instanceof Boolean) {
         return ((Boolean) l).compareTo((Boolean) r);
@@ -206,31 +254,60 @@ public abstract class QueryRunnerTestBase extends QueryTestSet {
         return ((Timestamp) l).compareTo((Timestamp) r);
       } else if (l instanceof int[]) {
         int[] larray = (int[]) l;
-        Object[] rarray;
         try {
-          rarray = (Object[]) ((JdbcArray) r).getArray();
+          if (r instanceof JdbcArray) {
+            Object[] rarray = (Object[]) ((JdbcArray) r).getArray();
+            for (int idx = 0; idx < larray.length; idx++) {
+              Number relement = (Number) rarray[idx];
+              if (larray[idx] != relement.intValue()) {
+                return -1;
+              }
+            }
+          } else {
+            int[] rarray = (int[]) r;
+            for (int idx = 0; idx < larray.length; idx++) {
+              if (larray[idx] != rarray[idx]) {
+                return -1;
+              }
+            }
+          }
         } catch (SQLException e) {
           throw new RuntimeException(e);
-        }
-        for (int idx = 0; idx < larray.length; idx++) {
-          Number relement = (Number) rarray[idx];
-          if (larray[idx] != relement.intValue()) {
-            return -1;
-          }
         }
         return 0;
       } else if (l instanceof String[]) {
         String[] larray = (String[]) l;
-        Object[] rarray;
         try {
-          rarray = (Object[]) ((JdbcArray) r).getArray();
+          if (r instanceof JdbcArray) {
+            Object[] rarray = (Object[]) ((JdbcArray) r).getArray();
+            for (int idx = 0; idx < larray.length; idx++) {
+              if (!larray[idx].equals(rarray[idx])) {
+                return -1;
+              }
+            }
+          } else {
+            String[] rarray = (r instanceof List) ? ((List<String>) r).toArray(new String[0]) : (String[]) r;
+            for (int idx = 0; idx < larray.length; idx++) {
+              if (!larray[idx].equals(rarray[idx])) {
+                return -1;
+              }
+            }
+          }
         } catch (SQLException e) {
           throw new RuntimeException(e);
         }
-        for (int idx = 0; idx < larray.length; idx++) {
-          if (!larray[idx].equals(rarray[idx])) {
-            return -1;
+        return 0;
+      } else if (l instanceof JdbcArray) {
+        try {
+          Object[] larray = (Object[]) ((JdbcArray) l).getArray();
+          Object[] rarray = (Object[]) ((JdbcArray) r).getArray();
+          for (int idx = 0; idx < larray.length; idx++) {
+            if (!larray[idx].equals(rarray[idx])) {
+              return -1;
+            }
           }
+        } catch (SQLException e) {
+          throw new RuntimeException(e);
         }
         return 0;
       } else {
@@ -441,6 +518,8 @@ public abstract class QueryRunnerTestBase extends QueryTestSet {
       public String _expectedException;
       @JsonProperty("keepOutputRowOrder")
       public boolean _keepOutputRowOrder;
+      @JsonProperty("expectedNumSegments")
+      public Integer _expectedNumSegments;
     }
 
     public static class ColumnAndType {

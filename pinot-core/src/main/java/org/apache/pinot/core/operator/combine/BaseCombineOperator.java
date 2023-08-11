@@ -19,18 +19,23 @@
 package org.apache.pinot.core.operator.combine;
 
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.pinot.common.exception.QueryException;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.BaseOperator;
 import org.apache.pinot.core.operator.blocks.results.BaseResultsBlock;
 import org.apache.pinot.core.operator.blocks.results.ExceptionResultsBlock;
+import org.apache.pinot.core.operator.combine.merger.ResultsBlockMerger;
 import org.apache.pinot.core.query.request.context.QueryContext;
+import org.apache.pinot.core.util.QueryMultiThreadingUtils;
 import org.apache.pinot.core.util.trace.TraceRunnable;
 import org.apache.pinot.spi.accounting.ThreadExecutionContext;
 import org.apache.pinot.spi.accounting.ThreadResourceUsageProvider;
@@ -47,9 +52,10 @@ import org.slf4j.LoggerFactory;
  * detects that the merged results can already satisfy the query, or the query is already errored out or timed out.
  */
 @SuppressWarnings({"rawtypes"})
-public abstract class BaseCombineOperator<T extends BaseResultsBlock> extends BaseOperator<T> {
+public abstract class BaseCombineOperator<T extends BaseResultsBlock> extends BaseOperator<BaseResultsBlock> {
   private static final Logger LOGGER = LoggerFactory.getLogger(BaseCombineOperator.class);
 
+  protected final ResultsBlockMerger<T> _resultsBlockMerger;
   protected final List<Operator> _operators;
   protected final int _numOperators;
   protected final QueryContext _queryContext;
@@ -57,11 +63,19 @@ public abstract class BaseCombineOperator<T extends BaseResultsBlock> extends Ba
   protected final int _numTasks;
   protected final Phaser _phaser;
   protected final Future[] _futures;
+
   // Use an AtomicInteger to track the next operator to execute
   protected final AtomicInteger _nextOperatorId = new AtomicInteger();
+  // Use a BlockingQueue to store the intermediate results blocks
+  protected final BlockingQueue<BaseResultsBlock> _blockingQueue = new LinkedBlockingQueue<>();
+  // Use an AtomicReference to track the exception/error during segment processing
+  protected final AtomicReference<Throwable> _processingException = new AtomicReference<>();
+
   protected final AtomicLong _totalWorkerThreadCpuTimeNs = new AtomicLong(0);
 
-  protected BaseCombineOperator(List<Operator> operators, QueryContext queryContext, ExecutorService executorService) {
+  protected BaseCombineOperator(ResultsBlockMerger<T> resultsBlockMerger, List<Operator> operators,
+      QueryContext queryContext, ExecutorService executorService) {
+    _resultsBlockMerger = resultsBlockMerger;
     _operators = operators;
     _numOperators = _operators.size();
     _queryContext = queryContext;
@@ -70,7 +84,7 @@ public abstract class BaseCombineOperator<T extends BaseResultsBlock> extends Ba
     // NOTE: We split the query execution into multiple tasks, where each task handles the query execution on multiple
     //       (>=1) segments. These tasks are assigned to multiple execution threads so that they can run in parallel.
     //       The parallelism is bounded by the task count.
-    _numTasks = CombineOperatorUtils.getNumTasksForQuery(operators.size(), queryContext.getMaxExecutionThreads());
+    _numTasks = QueryMultiThreadingUtils.getNumTasksForQuery(operators.size(), queryContext.getMaxExecutionThreads());
 
     // Use a Phaser to ensure all the Futures are done (not scheduled, finished or interrupted) before the main thread
     // returns. We need to ensure this because the main thread holds the reference to the segments. If a segment is
