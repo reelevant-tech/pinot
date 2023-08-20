@@ -97,7 +97,6 @@ const TablesListingPage = () => {
         title="Tables"
         baseUrl="/tenants/table/"
       />
-      <AsyncPinotSchemas key={`schema-${schemasKey}`} />
       {showSchemaModal && (
         <AddSchemaOp
           hideModal={() => {
