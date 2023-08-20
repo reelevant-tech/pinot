@@ -723,7 +723,6 @@
           </exclusion>
         </exclusions>
       </dependency>
-
       <!-- netty BOM -->
       <dependency>
         <groupId>io.netty</groupId>

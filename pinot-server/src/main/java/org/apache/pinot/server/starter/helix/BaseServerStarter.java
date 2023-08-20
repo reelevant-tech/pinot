@@ -301,6 +301,7 @@ public abstract class BaseServerStarter implements ServiceStartable {
       // Only monitor enabled resources
       IdealState idealState = _helixAdmin.getResourceIdealState(_helixClusterName, resourceName);
       if (idealState == null || !idealState.isEnabled()) {
+        LOGGER.warn("Cannot find ideal state for resource {}.", resourceName);
         continue;
       }
       for (String partitionName : idealState.getPartitionSet()) {
