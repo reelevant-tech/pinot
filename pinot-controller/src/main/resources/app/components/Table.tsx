@@ -75,7 +75,8 @@ type Props = {
     toggleValue: boolean;
   },
   tooltipData?: string[],
-  additionalControls?: React.ReactNode
+  additionalControls?: React.ReactNode,
+  onRowsRendered?: (rows: any[]) => void
 };
 
 // These sort functions are applied to any columns with these names. Otherwise, we just
@@ -293,7 +294,8 @@ export default function CustomizedTables({
   regexReplace,
   accordionToggleObject,
   tooltipData,
-  additionalControls
+  additionalControls,
+  onRowsRendered
 }: Props) {
   // Separate the initial and final data into two separated state variables.
   // This way we can filter and sort the data without affecting the original data.
@@ -320,6 +322,16 @@ export default function CustomizedTables({
   const classes = useStyles();
   const [rowsPerPage, setRowsPerPage] = React.useState(defaultRowsPerPage || 10);
   const [page, setPage] = React.useState(0);
+  // compute which table are on screen
+  const currentlyRenderedRows = React.useMemo(() => {
+    return finalData.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+  }, [finalData, page, rowsPerPage])
+
+  React.useEffect(() => {
+    if (typeof onRowsRendered === 'function' && page > 0) {
+      onRowsRendered(currentlyRenderedRows)
+    }
+  }, [page, rowsPerPage])
 
   const handleChangeRowsPerPage = (
     event: React.ChangeEvent<HTMLInputElement>
