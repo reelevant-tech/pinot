@@ -111,7 +111,7 @@ public class PulsarPartitionLevelConsumer extends PulsarPartitionLevelConnection
             PulsarUtils.buildPulsarStreamMessage(nextMessage, _enableKeyValueStitch, _pulsarMetadataExtractor));
 
         if (Thread.interrupted()) {
-          break;
+          return new PulsarMessageBatch(new ArrayList<>(), _enableKeyValueStitch);
         }
       }
 
