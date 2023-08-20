@@ -23,7 +23,7 @@ LABEL MAINTAINER=dev@pinot.apache.org
 
 ARG PINOT_BRANCH=master
 ARG JDK_VERSION=11
-ARG PINOT_GIT_URL="https://github.com/apache/pinot.git"
+ARG PINOT_GIT_URL="https://github.com/reelevant-tech/pinot.git"
 ARG CI=true
 
 RUN echo "Build Pinot based on image: apachepinot/pinot-base-build:${PINOT_BASE_IMAGE_TAG}"
@@ -35,10 +35,10 @@ ENV PINOT_BUILD_DIR=/opt/pinot-build
 ENV MAVEN_HOME /usr/share/maven
 ENV MAVEN_CONFIG /opt/.m2
 
-RUN git clone ${PINOT_GIT_URL} ${PINOT_BUILD_DIR} && \
+RUN git clone --depth=1 ${PINOT_GIT_URL} ${PINOT_BUILD_DIR} && \
     cd ${PINOT_BUILD_DIR} && \
     git checkout ${PINOT_BRANCH} && \
-    mvn install package -DskipTests -Pbin-dist -Pbuild-shaded-jar -Djdk.version=${JDK_VERSION} -T1C && \
+    mvn install package -DskipTests -Pbin-dist -Pbuild-shaded-jar -Dcheckstyle.skip -Djdk.version=${JDK_VERSION} -T1C && \
     rm -rf /root/.m2 && \
     mkdir -p ${PINOT_HOME}/configs && \
     mkdir -p ${PINOT_HOME}/data && \
