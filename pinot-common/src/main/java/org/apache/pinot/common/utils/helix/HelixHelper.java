@@ -293,8 +293,9 @@ public class HelixHelper {
 
     // Removing partitions from ideal state
     LOGGER.info("Trying to remove resource {} from idealstate", resourceTag);
+    // Use noChangeOk=true since removal is idempotent (it's fine if the resource doesn't exist)
     HelixHelper.updateIdealState(helixManager, CommonConstants.Helix.BROKER_RESOURCE_INSTANCE, updater,
-        DEFAULT_RETRY_POLICY);
+        DEFAULT_RETRY_POLICY, true);
   }
 
   /**

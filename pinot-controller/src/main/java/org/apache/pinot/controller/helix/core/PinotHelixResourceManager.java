@@ -2540,7 +2540,12 @@ public class PinotHelixResourceManager {
       SegmentAssignment segmentAssignment =
           SegmentAssignmentFactory.getSegmentAssignment(_helixZkManager, tableConfig, _controllerMetrics);
       HelixHelper.updateIdealState(_helixZkManager, tableNameWithType, idealState -> {
-        assert idealState != null;
+        // Handle null ideal state - create a new one if it doesn't exist
+        if (idealState == null) {
+          LOGGER.info("IdealState is null for table: {}, creating a new one", tableNameWithType);
+          idealState = PinotTableIdealStateBuilder.buildEmptyIdealStateFor(tableNameWithType,
+              tableConfig.getReplication(), _enableBatchMessageMode);
+        }
         Map<String, Map<String, String>> currentAssignment = idealState.getRecord().getMapFields();
         if (currentAssignment.containsKey(segmentName)) {
           LOGGER.warn("Segment: {} already exists in the IdealState for table: {}, do not update", segmentName,
@@ -2611,7 +2616,12 @@ public class PinotHelixResourceManager {
           SegmentAssignmentFactory.getSegmentAssignment(_helixZkManager, tableConfig, _controllerMetrics);
       long segmentAssignmentStartMs = System.currentTimeMillis();
       HelixHelper.updateIdealState(_helixZkManager, tableNameWithType, idealState -> {
-        assert idealState != null;
+        // Handle null ideal state - create a new one if it doesn't exist
+        if (idealState == null) {
+          LOGGER.info("IdealState is null for table: {}, creating a new one", tableNameWithType);
+          idealState = PinotTableIdealStateBuilder.buildEmptyIdealStateFor(tableNameWithType,
+              tableConfig.getReplication(), _enableBatchMessageMode);
+        }
         Map<String, Map<String, String>> currentAssignment = idealState.getRecord().getMapFields();
         for (Map.Entry<String, SegmentZKMetadata> entry : segmentZKMetadataMap.entrySet()) {
           String segmentName = entry.getKey();
