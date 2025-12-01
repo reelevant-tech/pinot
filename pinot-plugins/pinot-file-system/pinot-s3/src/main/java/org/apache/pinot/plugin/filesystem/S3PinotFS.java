@@ -114,6 +114,7 @@ public class S3PinotFS extends BasePinotFS {
   private String _ssekmsEncryptionContext;
   private long _minObjectSizeToUploadInParts;
   private long _multiPartUploadPartSize;
+  private boolean _disableMultipartUpload;
   private @Nullable StorageClass _storageClass;
 
   @Override
@@ -189,6 +190,7 @@ public class S3PinotFS extends BasePinotFS {
 
       _s3Client = s3ClientBuilder.build();
       setMultiPartUploadConfigs(_s3Config);
+      _disableMultipartUpload = _s3Config.isMultipartUploadDisabled();
     } catch (S3Exception e) {
       throw new RuntimeException("Could not initialize S3PinotFS", e);
     }
@@ -293,6 +295,7 @@ public class S3PinotFS extends BasePinotFS {
     setServerSideEncryption(serverSideEncryption, s3Config);
     setMultiPartUploadConfigs(s3Config);
     setDisableAcl(s3Config);
+    _disableMultipartUpload = s3Config.isMultipartUploadDisabled();
   }
 
   @VisibleForTesting
@@ -792,7 +795,7 @@ public class S3PinotFS extends BasePinotFS {
   @Override
   public void copyFromLocalFile(File srcFile, URI dstUri)
       throws Exception {
-    if (_minObjectSizeToUploadInParts > 0 && srcFile.length() > _minObjectSizeToUploadInParts) {
+    if (!_disableMultipartUpload && _minObjectSizeToUploadInParts > 0 && srcFile.length() > _minObjectSizeToUploadInParts) {
       LOGGER.info("Copy {} from local to {} in parts", srcFile.getAbsolutePath(), dstUri);
       uploadFileInParts(srcFile, dstUri);
     } else {
@@ -867,6 +870,11 @@ public class S3PinotFS extends BasePinotFS {
   void setMultiPartUploadConfigs(long minObjectSizeToUploadInParts, long multiPartUploadPartSize) {
     _minObjectSizeToUploadInParts = minObjectSizeToUploadInParts;
     _multiPartUploadPartSize = multiPartUploadPartSize;
+  }
+
+  @VisibleForTesting
+  void setDisableMultipartUpload(boolean disableMultipartUpload) {
+    _disableMultipartUpload = disableMultipartUpload;
   }
 
   @Override

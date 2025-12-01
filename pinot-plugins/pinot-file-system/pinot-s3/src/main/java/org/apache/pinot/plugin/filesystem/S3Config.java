@@ -85,6 +85,8 @@ public class S3Config {
   public static final String REQUEST_CHECKSUM_CALCULATION = "requestChecksumCalculation";
   public static final String RESPONSE_CHECKSUM_VALIDATION = "responseChecksumValidation";
   public static final String USE_LEGACY_MD5_PLUGIN = "useLegacyMd5Plugin";
+  public static final String DISABLE_MULTIPART_UPLOAD = "disableMultipartUpload";
+  private static final boolean DEFAULT_DISABLE_MULTIPART_UPLOAD = false;
 
 
   private final String _accessKey;
@@ -112,6 +114,7 @@ public class S3Config {
   private final RequestChecksumCalculation _requestChecksumCalculationWhenRequired;
   private final ResponseChecksumValidation _responseChecksumValidationWhenRequired;
   private final boolean _useLegacyMd5Plugin;
+  private final boolean _disableMultipartUpload;
 
   public S3Config(PinotConfiguration pinotConfig) {
     _disableAcl = pinotConfig.getProperty(DISABLE_ACL_CONFIG_KEY, DEFAULT_DISABLE_ACL);
@@ -126,6 +129,8 @@ public class S3Config {
     _responseChecksumValidationWhenRequired = ResponseChecksumValidation.fromValue(
         pinotConfig.getProperty(RESPONSE_CHECKSUM_VALIDATION, ResponseChecksumValidation.WHEN_REQUIRED.name()));
     _useLegacyMd5Plugin = Boolean.parseBoolean(pinotConfig.getProperty(USE_LEGACY_MD5_PLUGIN, "false"));
+    _disableMultipartUpload = Boolean.parseBoolean(
+        pinotConfig.getProperty(DISABLE_MULTIPART_UPLOAD, String.valueOf(DEFAULT_DISABLE_MULTIPART_UPLOAD)));
 
     _storageClass = pinotConfig.getProperty(STORAGE_CLASS);
     if (_storageClass != null) {
@@ -308,5 +313,9 @@ public class S3Config {
 
   public boolean useLegacyMd5Plugin() {
     return _useLegacyMd5Plugin;
+  }
+
+  public boolean isMultipartUploadDisabled() {
+    return _disableMultipartUpload;
   }
 }
