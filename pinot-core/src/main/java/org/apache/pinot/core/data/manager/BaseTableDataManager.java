@@ -715,6 +715,11 @@ public abstract class BaseTableDataManager implements TableDataManager {
     }
   }
 
+  @Nullable
+  public SegmentDataManager getSegmentDataManager(String segmentName) {
+    return _segmentDataManagerMap.get(segmentName);
+  }
+
   @Override
   public void releaseSegment(SegmentDataManager segmentDataManager) {
     if (segmentDataManager.decreaseReferenceCount()) {
