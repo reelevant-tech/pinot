@@ -965,14 +965,8 @@ public abstract class BaseControllerStarter implements ServiceStartable {
     _helixParticipantManager.addControllerListener(
         (ControllerChangeListener) changeContext -> _leadControllerManager.onHelixControllerChange());
 
-    LOGGER.info("Registering resource config listener");
-    try {
-      _helixParticipantManager.addResourceConfigChangeListener(
-          (resourceConfigList, changeContext) -> _leadControllerManager.onResourceConfigChange());
-    } catch (Exception e) {
-      throw new RuntimeException(
-          "Error registering resource config listener for " + Helix.LEAD_CONTROLLER_RESOURCE_NAME, e);
-    }
+    // No resource config listener: it would watch every Minion task config and starve this participant's single ZK
+    // event thread, delaying its messages. LeadControllerManager polls the lead controller resource config instead.
   }
 
   private void updateInstanceConfigIfNeeded() {
