@@ -94,6 +94,7 @@ import org.apache.pinot.util.TestUtils;
 import org.joda.time.DateTimeZone;
 import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.DateTimeFormatterBuilder;
+import org.mockito.MockedStatic;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -102,6 +103,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static org.testng.Assert.*;
@@ -383,6 +385,45 @@ public class PinotHelixResourceManagerStatelessTest extends ControllerTest {
     _helixResourceManager.deleteOfflineTable(RAW_TABLE_NAME);
     _helixResourceManager.deleteRealtimeTable(RAW_TABLE_NAME);
     assertTrue(_helixResourceManager.dropInstance(newBrokerId).isSuccessful());
+    resetBrokerTags();
+  }
+
+  @Test
+  public void testAddLogicalTableConfigRemovesConfigWhenBrokerResourceUpdateFails()
+      throws Exception {
+    untagBrokers();
+    _helixResourceManager.createBrokerTenant(new Tenant(TenantRole.BROKER, BROKER_TENANT_NAME, 2, 0, 0));
+    addDummySchema(RAW_TABLE_NAME);
+    TableConfig offlineTableConfig =
+        new TableConfigBuilder(TableType.OFFLINE).setTableName(RAW_TABLE_NAME).setBrokerTenant(BROKER_TENANT_NAME)
+            .setServerTenant(SERVER_TENANT_NAME).build();
+    waitForEVToDisappear(offlineTableConfig.getTableName());
+    _helixResourceManager.addTable(offlineTableConfig);
+    String logicalTableName = "test_logical_table_rollback";
+    addDummySchema(logicalTableName);
+    LogicalTableConfig logicalTableConfig =
+        ControllerTest.getDummyLogicalTableConfig(logicalTableName, List.of(OFFLINE_TABLE_NAME), BROKER_TENANT_NAME);
+
+    // Only the BrokerResource update fails, every other HelixHelper call runs for real
+    try (MockedStatic<HelixHelper> ignored = mockStatic(HelixHelper.class, invocation -> {
+      if (invocation.getMethod().getName().equals("updateIdealState") && invocation.getArguments().length == 3
+          && Helix.BROKER_RESOURCE_INSTANCE.equals(invocation.getArgument(1))) {
+        throw new RuntimeException("Simulated BrokerResource update failure");
+      }
+      return invocation.callRealMethod();
+    })) {
+      expectThrows(RuntimeException.class, () -> _helixResourceManager.addLogicalTableConfig(logicalTableConfig));
+    }
+    assertNull(_helixResourceManager.getLogicalTableConfig(logicalTableName));
+    assertFalse(HelixHelper.getBrokerIdealStates(_helixAdmin, _clusterName).getPartitionSet().contains(logicalTableName));
+
+    // Retrying the add now succeeds instead of failing with "already exists"
+    _helixResourceManager.addLogicalTableConfig(logicalTableConfig);
+    assertNotNull(_helixResourceManager.getLogicalTableConfig(logicalTableName));
+    assertTrue(HelixHelper.getBrokerIdealStates(_helixAdmin, _clusterName).getPartitionSet().contains(logicalTableName));
+
+    _helixResourceManager.deleteLogicalTableConfig(logicalTableName);
+    _helixResourceManager.deleteOfflineTable(RAW_TABLE_NAME);
     resetBrokerTags();
   }
 

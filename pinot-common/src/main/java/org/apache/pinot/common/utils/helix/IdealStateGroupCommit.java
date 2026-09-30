@@ -109,9 +109,10 @@ public class IdealStateGroupCommit {
    * Do a group update for idealState associated with a given resource key
    * @param helixManager helixManager with the ability to pull from the current data\
    * @param resourceName the resource name to be updated
-   * @param updater the idealState updater to be applied
+   * @param updater the idealState updater to be applied. Returning null means "no change": the updater must then
+   * leave its input untouched, and the next updaters of the batch still receive the current ideal state
    * @return IdealState if the update is successful, exception if the update fails and null if interrupted while
-   * committing change
+   * committing change or if the updater returned null
    */
   public IdealState commit(HelixManager helixManager, String resourceName, Function<IdealState, IdealState> updater,
       RetryPolicy retryPolicy, boolean noChangeOk) {
@@ -151,9 +152,13 @@ public class IdealStateGroupCommit {
               }
               processed.add(ent);
               it.remove();
-              updatedIdealState = ent._updater.apply(updatedIdealState);
-              ent._updatedIdealState = updatedIdealState;
+              IdealState updaterResult = ent._updater.apply(updatedIdealState);
+              ent._updatedIdealState = updaterResult;
               ent._exception = null;
+              // null = "no change" for this updater; the next updater must still get the current ideal state
+              if (updaterResult != null) {
+                updatedIdealState = updaterResult;
+              }
             }
             return updatedIdealState;
           }, retryPolicy, noChangeOk);

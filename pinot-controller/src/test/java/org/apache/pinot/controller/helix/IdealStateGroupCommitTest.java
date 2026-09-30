@@ -24,10 +24,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -329,6 +331,59 @@ public class IdealStateGroupCommitTest {
       if (!pool.isShutdown()) {
         pool.shutdownNow();
       }
+      _helixAdmin.dropResource(_clusterName, tableName);
+    }
+  }
+
+  @Test
+  public void testNullUpdaterDoesNotBreakTheRestOfTheBatch()
+      throws Exception {
+    String tableName = TABLE_NAME_PREFIX + "null_updater_OFFLINE";
+    IdealState initialState = new IdealState(tableName);
+    initialState.setStateModelDefRef("OnlineOffline");
+    initialState.setRebalanceMode(IdealState.RebalanceMode.CUSTOMIZED);
+    initialState.setReplicas("1");
+    initialState.setNumPartitions(0);
+    _helixAdmin.addResource(_clusterName, tableName, initialState);
+    ControllerMetrics.get().removeTableMeter(tableName, ControllerMeter.IDEAL_STATE_UPDATE_SUCCESS);
+    try {
+      IdealStateGroupCommit commit = new IdealStateGroupCommit();
+      CountDownLatch holderStarted = new CountDownLatch(1);
+      CountDownLatch releaseHolder = new CountDownLatch(1);
+
+      // Holds the queue while the next two updaters are enqueued, so that they are committed in the same batch
+      Future<IdealState> holder = _executorService.submit(() -> commit.commit(_helixManager, tableName, is -> {
+        holderStarted.countDown();
+        try {
+          releaseHolder.await();
+        } catch (InterruptedException e) {
+          throw new RuntimeException(e);
+        }
+        is.setPartitionState("holder", "holder", "ONLINE");
+        return is;
+      }, RetryPolicies.noDelayRetryPolicy(3), false));
+      assertTrue(holderStarted.await(30, TimeUnit.SECONDS));
+
+      // Same contract as HelixHelper.removeResourceFromBrokerIdealState when the resource is absent
+      Future<IdealState> noChange = _executorService.submit(
+          () -> commit.commit(_helixManager, tableName, is -> null, RetryPolicies.noDelayRetryPolicy(3), true));
+      Thread.sleep(500);
+      Future<IdealState> change = _executorService.submit(() -> commit.commit(_helixManager, tableName, is -> {
+        is.setPartitionState("added", "added", "ONLINE");
+        return is;
+      }, RetryPolicies.noDelayRetryPolicy(3), false));
+      Thread.sleep(500);
+      releaseHolder.countDown();
+
+      assertNotNull(holder.get(30, TimeUnit.SECONDS));
+      assertNull(noChange.get(30, TimeUnit.SECONDS));
+      assertNotNull(change.get(30, TimeUnit.SECONDS));
+      // One ZK write for the holder, one for the batch shared by the null and the changing updater
+      assertEquals(ControllerMetrics.get().getMeteredTableValue(tableName, ControllerMeter.IDEAL_STATE_UPDATE_SUCCESS)
+          .count(), 2);
+      IdealState idealState = HelixHelper.getTableIdealState(_helixManager, tableName);
+      assertEquals(idealState.getPartitionSet(), Set.of("holder", "added"));
+    } finally {
       _helixAdmin.dropResource(_clusterName, tableName);
     }
   }
