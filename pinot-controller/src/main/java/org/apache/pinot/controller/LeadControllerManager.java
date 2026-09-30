@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.controller;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.annotation.concurrent.ThreadSafe;
@@ -42,6 +43,7 @@ public class LeadControllerManager {
   private final String _helixControllerInstanceId;
   private final HelixManager _helixManager;
   private final ControllerMetrics _controllerMetrics;
+  private final long _fetchIntervalMs;
   private final Set<Integer> _leadForPartitions;
   private final Thread _controllerLeadershipFetchingThread;
 
@@ -51,12 +53,20 @@ public class LeadControllerManager {
 
   public LeadControllerManager(String helixControllerInstanceId, HelixManager helixManager,
       ControllerMetrics controllerMetrics) {
+    this(helixControllerInstanceId, helixManager, controllerMetrics, CONTROLLER_LEADERSHIP_FETCH_INTERVAL_MS);
+  }
+
+  @VisibleForTesting
+  LeadControllerManager(String helixControllerInstanceId, HelixManager helixManager,
+      ControllerMetrics controllerMetrics, long fetchIntervalMs) {
     _helixControllerInstanceId = helixControllerInstanceId;
     _helixManager = helixManager;
     _controllerMetrics = controllerMetrics;
+    _fetchIntervalMs = fetchIntervalMs;
     _leadForPartitions = ConcurrentHashMap.newKeySet();
 
-    // Create a thread to periodically fetch controller leadership as a work-around of Helix callback delay
+    // Create a thread to periodically fetch controller leadership as a work-around of Helix callback delay, and the
+    // lead controller resource config, which has no Helix listener (see refreshLeadControllerResourceEnabled())
     _controllerLeadershipFetchingThread = new Thread("ControllerLeadershipFetchingThread") {
       @Override
       public void run() {
@@ -83,7 +93,8 @@ public class LeadControllerManager {
                 }
                 _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.PINOT_CONTROLLER_LEADER, 0L);
               }
-              LeadControllerManager.this.wait(CONTROLLER_LEADERSHIP_FETCH_INTERVAL_MS);
+              refreshLeadControllerResourceEnabled();
+              LeadControllerManager.this.wait(_fetchIntervalMs);
             }
           } catch (Exception e) {
             // Ignore all exceptions. The thread keeps running until LeadControllerManager.stop() is invoked.
@@ -155,9 +166,11 @@ public class LeadControllerManager {
   }
 
   /**
-   * Starts the fetching thread to actively fetch helix leadership and resource config of lead controller resource.
+   * Reads the resource config of lead controller resource once, then starts the fetching thread to actively fetch
+   * helix leadership and that resource config. Must be called after the Helix participant is connected.
    */
   public synchronized void start() {
+    refreshLeadControllerResourceEnabled();
     _controllerLeadershipFetchingThread.start();
   }
 
@@ -213,9 +226,11 @@ public class LeadControllerManager {
   }
 
   /**
-   * Callback on changes in resource config.
+   * Reads from ZK whether the lead controller resource is enabled. Called on start and by the fetching thread.
+   * Deliberately not a Helix ResourceConfigChangeListener: CONFIGS/RESOURCE also holds every Minion task config, and
+   * re-watching each of them on every change saturates the participant's single ZK event thread, delaying messages.
    */
-  synchronized void onResourceConfigChange() {
+  synchronized void refreshLeadControllerResourceEnabled() {
     if (_isShuttingDown) {
       return;
     }
@@ -224,22 +239,21 @@ public class LeadControllerManager {
     try {
       leadControllerResourceEnabled = LeadControllerUtils.isLeadControllerResourceEnabled(_helixManager);
     } catch (Exception e) {
-      // Do not change the state if any exception happened.
-      // Enabling the resource is always one-off. If administrator wants to enable it he will check the log.
-      // Plus, it's quite common to have resource config changes because every time there's a Helix task generated,
-      // the task will be written to resource config, which will trigger this notification as well.
+      // Do not change the state if any exception happened, the next fetch will retry.
       LOGGER.error("Exception when checking whether lead controller resource is enabled or not.", e);
       return;
     }
 
-    if (leadControllerResourceEnabled) {
-      LOGGER.info("Lead controller resource is enabled.");
-      _isLeadControllerResourceEnabled = true;
-      _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.PINOT_LEAD_CONTROLLER_RESOURCE_ENABLED, 1L);
-    } else {
-      LOGGER.info("Lead controller resource is disabled.");
-      _isLeadControllerResourceEnabled = false;
-      _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.PINOT_LEAD_CONTROLLER_RESOURCE_ENABLED, 0L);
+    if (leadControllerResourceEnabled != _isLeadControllerResourceEnabled) {
+      LOGGER.info("Lead controller resource is {}.", leadControllerResourceEnabled ? "enabled" : "disabled");
+      _isLeadControllerResourceEnabled = leadControllerResourceEnabled;
     }
+    _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.PINOT_LEAD_CONTROLLER_RESOURCE_ENABLED,
+        leadControllerResourceEnabled ? 1L : 0L);
+  }
+
+  @VisibleForTesting
+  boolean isLeadControllerResourceEnabled() {
+    return _isLeadControllerResourceEnabled;
   }
 }

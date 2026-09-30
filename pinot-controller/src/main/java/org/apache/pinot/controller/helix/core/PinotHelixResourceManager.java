@@ -1960,7 +1960,22 @@ public class PinotHelixResourceManager {
     ZKMetadataProvider.setLogicalTableConfig(_propertyStore, logicalTableConfig);
 
     LOGGER.info("Adding logical table {}: Updating BrokerResource for table", tableName);
-    updateBrokerResourceForLogicalTable(logicalTableConfig, tableName);
+    try {
+      updateBrokerResourceForLogicalTable(logicalTableConfig, tableName);
+    } catch (RuntimeException e) {
+      // Otherwise the config stays without a BrokerResource entry, and neither a retried POST (409) nor a PUT fixes it
+      LOGGER.error("Failed to add logical table {} to BrokerResource, removing its config", tableName);
+      try {
+        if (!_propertyStore.remove(ZKMetadataProvider.constructPropertyStorePathForLogical(tableName),
+            AccessOption.PERSISTENT)) {
+          LOGGER.error("Failed to remove the config of logical table {}, delete the table before adding it again",
+              tableName);
+        }
+      } catch (RuntimeException removeException) {
+        e.addSuppressed(removeException);
+      }
+      throw e;
+    }
 
     LOGGER.info("Added logical table {}: Successfully added table", tableName);
   }
