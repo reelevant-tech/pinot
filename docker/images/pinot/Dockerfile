@@ -17,7 +17,7 @@
 # under the License.
 #
 ARG JAVA_VERSION=21
-FROM apachepinot/pinot-base-build:${JAVA_VERSION}-amazoncorretto AS pinot_build_env
+FROM --platform=$BUILDPLATFORM apachepinot/pinot-base-build:${JAVA_VERSION}-amazoncorretto AS pinot_build_env
 
 LABEL MAINTAINER=dev@pinot.apache.org
 
