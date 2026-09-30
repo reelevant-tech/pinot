@@ -45,8 +45,23 @@ RUN git clone ${PINOT_GIT_URL} ${PINOT_BUILD_DIR} && \
     cp -r build/* ${PINOT_HOME}/. && \
     chmod +x ${PINOT_HOME}/bin/*.sh
 
-ARG JAVA_VERSION=21
-FROM apachepinot/pinot-base-runtime:${JAVA_VERSION}-amazoncorretto
+# Same runtime as apachepinot/pinot-base-runtime:21-amazoncorretto before upstream rebased that tag on Debian (#18178)
+FROM amazoncorretto:21-al2023-jdk@sha256:70c4c569bf3f794e4b9f22619efb64a072a5d97fd66867fd134398c12d6f2905
+
+RUN yum update -y && \
+  yum swap -y curl-minimal curl && \
+  yum install -y procps less wget git-core sysstat libtasn1 zstd tar gzip && \
+  yum clean all && \
+  rm -rf /var/cache/yum
+
+RUN case `uname -m` in \
+  x86_64) arch=x64; ;; \
+  aarch64) arch=arm64; ;; \
+  *) echo "platform=$(uname -m) un-supported, exit ..."; exit 1; ;; \
+  esac \
+  && mkdir -p /usr/local/lib/async-profiler \
+  && curl -L https://github.com/async-profiler/async-profiler/releases/download/v4.3/async-profiler-4.3-linux-${arch}.tar.gz | tar -xz --strip-components 1 -C /usr/local/lib/async-profiler \
+  && ln -s /usr/local/lib/async-profiler/bin/asprof /usr/local/bin/async-profiler
 
 LABEL MAINTAINER=dev@pinot.apache.org
 
