@@ -46,7 +46,7 @@ RUN git clone ${PINOT_GIT_URL} ${PINOT_BUILD_DIR} && \
     chmod +x ${PINOT_HOME}/bin/*.sh
 
 # Same runtime as apachepinot/pinot-base-runtime:21-amazoncorretto before upstream rebased that tag on Debian (#18178)
-FROM amazoncorretto:21-al2023-jdk@sha256:70c4c569bf3f794e4b9f22619efb64a072a5d97fd66867fd134398c12d6f2905
+FROM amazoncorretto:21-al2023-jdk@sha256:3284a05cb82e9bceb4857f9d70788a6f72681d9070b550ae5f477b5e3dc81a5c
 
 RUN yum update -y && \
   yum swap -y curl-minimal curl && \
